@@ -1,0 +1,1 @@
+Using YOLOv8 model to monitor events in a storehouse.
