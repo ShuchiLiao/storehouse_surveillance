@@ -16,7 +16,7 @@ __pycache__
 *.docx
 *.sh
 *.rar
-
+*.tar
 test.py
 Fonts/
 model/
