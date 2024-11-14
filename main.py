@@ -7,7 +7,9 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from ultralytics import YOLO
 import logging
+import paho.mqtt.client as mqtt
 from utils import put_chinese_text
+import json
 
 logging.getLogger().setLevel(logging.WARNING)
 
@@ -22,8 +24,14 @@ model = YOLO('model/best.pt', verbose=False)
 
 live_alert_system = LiveAlertSystem(model, cooldown=60)
 
-async def process_camera(camera_id):
-    cap = cv2.VideoCapture(camera_id)
+# 设置mqtt 地址
+mqtt_client = mqtt.Client()
+mqtt_client.connect("host.docker.internal", 1883, 60)
+# mqtt_client.connect("127.0.0.1", 1883, 60)
+mqtt_topic = "/ai"
+
+async def process_camera(stream_url):
+    cap = cv2.VideoCapture(f"{stream_url}?rtsp_transport=tcp")
     # # 设置帧率为5fps
     # cap.set(cv2.CAP_PROP_FPS, 2)  # 将帧率设置为 5
     # # 验证帧率设置是否成功
@@ -31,9 +39,9 @@ async def process_camera(camera_id):
     # print(f"Current FPS: {fps}")
 
     if not cap.isOpened():
-        raise Exception(f"无法打开摄像头 {camera_id}")
+        raise Exception(f"无法打开摄像头 {stream_url}")
 
-    active_camera[camera_id] = cap
+    active_camera[stream_url] = cap
 
     frame_count = 0
     skip_frames = 10
@@ -43,7 +51,7 @@ async def process_camera(camera_id):
 
     def stream_video():
 
-        nonlocal frame_count, last_person_count, last_alert_msg
+        nonlocal frame_count, last_person_count, last_alert_msg, stream_url
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -54,7 +62,7 @@ async def process_camera(camera_id):
 
             if frame_count % skip_frames == 0:
                 # 每x帧调用模型进行推理
-                frame, person_count, alert_msg = live_alert_system.predict_and_alert(frame)
+                frame, person_count, alert_msg, mqtt_msgs = live_alert_system.predict_and_alert(stream_url,frame)
                 last_person_count = person_count
                 if alert_msg:
                     last_alert_msg = " ".join(sorted(alert_msg))
@@ -65,6 +73,16 @@ async def process_camera(camera_id):
                 # print(person_count)
                 # print(alert_msg)
                 # 在帧上显示检测到的人员
+                if mqtt_msgs:
+                    for msg in mqtt_msgs:
+                        if isinstance(msg, dict):
+                            # 将字典序列化为 JSON 字符串
+                            payload = json.dumps(msg)
+                            print(f"Publishing to MQTT: {payload}")
+                            mqtt_client.publish(mqtt_topic, payload)
+                        else:
+                            # 如果不是字典，直接转换为字符串并发布
+                            mqtt_client.publish(mqtt_topic, str(msg))
             else:
                 person_count = last_person_count
                 alert_msg = last_alert_msg
@@ -90,11 +108,11 @@ async def process_camera(camera_id):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    for camera_id, cap in active_camera.items():
+    for stream_url, cap in active_camera.items():
         if cap.isOpened():
             cap.release()
-            print(f"Camera {camera_id} released")
-    print("All camera released")
+            print(f"Stream {stream_url} released")
+    print("All Stream released")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -102,12 +120,12 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 async def root():
-    return {"message": "API is running. Use the camera."}
+    return {"message": "API is running. Use the stream URL."}
 
 
-@app.get("/camera/{camera_id}")
-async def camera_stream(camera_id: int):
+@app.get("/camera/{stream_url:path}")
+async def camera_stream(stream_url: str):
     # 动态处理不同摄像头的请求
-    return StreamingResponse(await process_camera(camera_id), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(await process_camera(stream_url), media_type="multipart/x-mixed-replace; boundary=frame")
 
 

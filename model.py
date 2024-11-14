@@ -33,12 +33,14 @@ class LiveAlertSystem:
         if not os.path.exists('screenshots'):
             os.makedirs('screenshots')
 
-    def predict_and_alert(self, frame):
+    def predict_and_alert(self, stream_url, frame):
         # 使用模型进行推断
         results = self.model(frame, verbose=False)
+        mqtt_msgs = []
         person_count = 0
         event = ""
         cls = ""
+
         self.alert_message.clear()
 
         # 遍历检测结果
@@ -82,11 +84,15 @@ class LiveAlertSystem:
                 put_chinese_text(frame, f"{cls.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
                          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
                 if alert:
-                    self.alert_and_screenshot(frame, event, cls)
+                    mqtt_msg = self.alert_and_screenshot(stream_url, frame, event, cls)
+                    if mqtt_msg:
+                        mqtt_msgs.append(mqtt_msg)
 
 
             if person_count == 1:
-                self.alert_and_screenshot(frame, "solo", "单独作业")
+                mqtt_msg = self.alert_and_screenshot(stream_url, frame, "solo", "单独作业")
+                if mqtt_msg:
+                    mqtt_msgs.append(mqtt_msg)
         # # 在帧上显示检测到的人员数量
         # frame = put_chinese_text(frame, f"人员数量: {person_count}", (10, 30),
         #                          font_path='Fonts/simhei.ttf', font_size=25, color=(0, 255, 0))
@@ -99,27 +105,44 @@ class LiveAlertSystem:
         # 重置事件状态（根据冷却时间）
         self.reset_event_status()
 
-        return frame, person_count, self.alert_message
+        return frame, person_count, self.alert_message,  mqtt_msgs
 
-    def save_screenshot(self, frame, event):
-        # 生成截图文件名
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"screenshots/{event}_{timestamp}.jpg"
-        # 更新截图时间
-        self.event_screenshot_time[event] = datetime.now()
-        # 保存截图
-        cv2.imwrite(filename, frame)
-        # print(f"截图已保存: {filename}")
+    # def save_screenshot(self, frame, event):
+    #     # 生成截图文件名
+    #     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    #     filename = f"screenshots/{event}_{timestamp}.jpg"
+    #     # 更新截图时间
+    #     self.event_screenshot_time[event] = datetime.now()
+    #     # 保存截图
+    #     cv2.imwrite(filename, frame)
+    #     # print(f"截图已保存: {filename}")
+    #     return filename
     #
     # def alert(self, event, cls):
     #     self.alert_message.add(cls)
     #     if not self.event_status[event]:
     #         self.event_status[event] = True
-    def alert_and_screenshot(self, frame, event, cls):
+    def alert_and_screenshot(self, stream_url, frame, event, cls):
         self.alert_message.add(cls)
         if not self.event_status[event]:
-            self.save_screenshot(frame, event)
+            # 生成截图文件名
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            screenshot_name = f"screenshots/{event}_{timestamp}.jpg"
+            # img_path = self.save_screenshot(frame, event)
             self.event_status[event] = True
+            # 更新截图时间
+            self.event_screenshot_time[event] = datetime.now()
+            # 保存截图
+            cv2.imwrite(screenshot_name, frame)
+            # mqtt_信息
+            mqtt_msg = {
+                "stream":stream_url,
+                "time": timestamp,
+                "eventType":event,
+                "screenshot":screenshot_name
+            }
+            return mqtt_msg
+
 
     def reset_event_status(self):
         """重置事件状态，避免频繁保存相同事件的截图。"""
@@ -127,9 +150,9 @@ class LiveAlertSystem:
         for event, status in self.event_status.items():
             if status:  # 事件已处理
                 time_since_last_screenshot = current_time - self.event_screenshot_time[event]
-                print("deltatime")
-                print(event)
-                print(time_since_last_screenshot)
+                # print("deltatime")
+                # print(event)
+                # print(time_since_last_screenshot)
                 if time_since_last_screenshot > timedelta(seconds=self.cooldown):
                     self.event_status[event] = False  # 重置状态
                     self.event_screenshot_time[event] = current_time  # 更新截图时间
