@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
-from model import LiveAlertSystem
+from torch.backends.mkl import verbose
+from model import DetectEvent, DetectPerson, DetectHelmet
 import cv2
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -20,15 +21,26 @@ models = {}
 # 定义线程池
 executor = ThreadPoolExecutor(max_workers=20)  # 最大线程数可以根据系统资源调整
 # 加载模型
-model = YOLO('model/best.pt', verbose=False)
+model_fall = YOLO('./model/best_fall.pt', verbose=False)
+model_fire = YOLO('./model/best_fire.pt', verbose=False)
+model_person = YOLO('./model/best_person.pt', verbose=False)
+model_helmet = YOLO('./model/best_helmet.pt', verbose=False)
+model_smoke = YOLO('./model/best_smoke.pt', verbose=False)
 
-live_alert_system = LiveAlertSystem(model, cooldown=60)
+detect_fall = DetectEvent('摔倒','fall', model_fall, cooldown=300)
+detect_smoke = DetectEvent('吸烟', 'smoke', model_smoke, cooldown=300)
+detect_fire = DetectEvent('火源', 'fire', model_fire, cooldown=300)
+detect_solo = DetectPerson('单独作业', 'solo', model_person, cooldown=300)
+detect_helmet = DetectHelmet('未戴头盔', 'no-helmet', model_helmet, cooldown=300)
+
 
 # 设置mqtt 地址
 mqtt_client = mqtt.Client()
-mqtt_client.connect("host.docker.internal", 1883, 60)
-# mqtt_client.connect("127.0.0.1", 1883, 60)
+# mqtt_client.connect("host.docker.internal", 1883, 60)
+mqtt_client.connect("127.0.0.1", 1883, 60)
 mqtt_topic = "/ai"
+
+mqtt_msgs = []
 
 async def process_camera(stream_url):
     cap = cv2.VideoCapture(f"{stream_url}?rtsp_transport=tcp")
@@ -46,12 +58,9 @@ async def process_camera(stream_url):
     frame_count = 0
     skip_frames = 10
 
-    last_person_count = 0
-    last_alert_msg = ""
-
     def stream_video():
 
-        nonlocal frame_count, last_person_count, last_alert_msg, stream_url
+        nonlocal frame_count, stream_url
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -59,17 +68,38 @@ async def process_camera(stream_url):
                 break
 
             frame_count += 1
+            person_count = 0
 
             if frame_count % skip_frames == 0:
+                alert_msg = ""
                 # 每x帧调用模型进行推理
-                frame, person_count, alert_msg, mqtt_msgs = live_alert_system.predict_and_alert(stream_url,frame)
-                last_person_count = person_count
-                if alert_msg:
-                    last_alert_msg = " ".join(sorted(alert_msg))
-                    alert_msg = " ".join(sorted(alert_msg))
-                else:
-                    last_alert_msg = ""
-                    alert_msg = ""
+                # 判断是否有跌倒：
+                frame, mqtt_fall = detect_fall.detect_and_alert(stream_url, frame, 0.8)
+                # 判断是否有吸烟：
+                frame, mqtt_smoke = detect_smoke.detect_and_alert(stream_url, frame, 0.6)
+                # 判断是否有火源：
+                frame, mqtt_fire = detect_fire.detect_and_alert(stream_url, frame, 0.65)
+                # 判断是否单独作业：
+                frame, mqtt_solo, person_count = detect_solo.detect_and_alert(stream_url, frame, 0.6)
+                # 判断是否戴头盔：
+                frame, mqtt_helmet = detect_helmet.detect_and_alert(stream_url, frame, 0.4)
+
+                if mqtt_fall:
+                    mqtt_msgs.append(mqtt_fall)
+                    alert_msg += "摔倒 "
+                if mqtt_smoke:
+                    mqtt_msgs.append(mqtt_smoke)
+                    alert_msg += "吸烟"
+                if mqtt_fire:
+                    mqtt_msgs.append(mqtt_fire)
+                    alert_msg += "火源"
+                if mqtt_solo:
+                    mqtt_msgs.append(mqtt_solo)
+                    alert_msg += "单独作业"
+                if mqtt_helmet:
+                    mqtt_msgs.append(mqtt_helmet)
+                    alert_msg += "未戴头盔"
+
                 # print(person_count)
                 # print(alert_msg)
                 # 在帧上显示检测到的人员
@@ -83,16 +113,16 @@ async def process_camera(stream_url):
                         else:
                             # 如果不是字典，直接转换为字符串并发布
                             mqtt_client.publish(mqtt_topic, str(msg))
-            else:
-                person_count = last_person_count
-                alert_msg = last_alert_msg
 
+                # 如果有警告，显示警告信息
+                frame = put_chinese_text(frame, f"警告: {alert_msg}", (10, 70),
+                                         font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
+
+            # 人员数量信息
             frame = put_chinese_text(frame, f"人员数量: {person_count}", (10, 30),
                                      font_path='Fonts/simhei.ttf', font_size=25, color=(0, 255, 0))
 
-            # 如果有警告，显示警告信息
-            frame = put_chinese_text(frame, f"警告: {alert_msg}", (10, 70),
-                                     font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
+
             # 编码帧并返回
             _, jpeg = cv2.imencode('.jpg', frame)
             frame_bytes = jpeg.tobytes()
