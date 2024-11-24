@@ -36,8 +36,8 @@ detect_helmet = DetectHelmet('未戴头盔', 'no-helmet', model_helmet, cooldown
 
 # 设置mqtt 地址
 mqtt_client = mqtt.Client()
-# mqtt_client.connect("host.docker.internal", 1883, 60)
-mqtt_client.connect("127.0.0.1", 1883, 60)
+mqtt_client.connect("host.docker.internal", 1883, 60)
+#mqtt_client.connect("127.0.0.1", 1883, 60)
 mqtt_topic = "/ai"
 
 mqtt_msgs = []
@@ -57,10 +57,11 @@ async def process_camera(stream_url):
 
     frame_count = 0
     skip_frames = 10
+    last_alert_msg = " "
 
     def stream_video():
 
-        nonlocal frame_count, stream_url
+        nonlocal frame_count, stream_url, last_alert_msg
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -71,7 +72,7 @@ async def process_camera(stream_url):
             person_count = 0
 
             if frame_count % skip_frames == 0:
-                alert_msg = ""
+                alert_msg = " "
                 # 每x帧调用模型进行推理
                 # 判断是否有跌倒：
                 frame, mqtt_fall = detect_fall.detect_and_alert(stream_url, frame, 0.8)
@@ -82,23 +83,23 @@ async def process_camera(stream_url):
                 # 判断是否单独作业：
                 frame, mqtt_solo, person_count = detect_solo.detect_and_alert(stream_url, frame, 0.6)
                 # 判断是否戴头盔：
-                frame, mqtt_helmet = detect_helmet.detect_and_alert(stream_url, frame, 0.4)
+                frame, mqtt_helmet = detect_helmet.detect_and_alert(stream_url, frame, 0.6)
 
                 if mqtt_fall:
                     mqtt_msgs.append(mqtt_fall)
-                    alert_msg += "摔倒 "
+                    alert_msg += " 摔倒 "
                 if mqtt_smoke:
                     mqtt_msgs.append(mqtt_smoke)
-                    alert_msg += "吸烟"
+                    alert_msg += " 吸烟 "
                 if mqtt_fire:
                     mqtt_msgs.append(mqtt_fire)
-                    alert_msg += "火源"
+                    alert_msg += " 火源 "
                 if mqtt_solo:
                     mqtt_msgs.append(mqtt_solo)
-                    alert_msg += "单独作业"
+                    alert_msg += " 单独作业 "
                 if mqtt_helmet:
                     mqtt_msgs.append(mqtt_helmet)
-                    alert_msg += "未戴头盔"
+                    alert_msg += " 未戴头盔 "
 
                 # print(person_count)
                 # print(alert_msg)
@@ -114,8 +115,16 @@ async def process_camera(stream_url):
                             # 如果不是字典，直接转换为字符串并发布
                             mqtt_client.publish(mqtt_topic, str(msg))
 
-                # 如果有警告，显示警告信息
-                frame = put_chinese_text(frame, f"警告: {alert_msg}", (10, 70),
+                if len(alert_msg) != 1:
+                    last_alert_msg = alert_msg
+            else:
+                alert_msg = last_alert_msg
+
+            # print(person_count)
+            # print(alert_msg)
+            # print(last_alert_msg)
+            # 如果有警告，显示警告信息
+            frame = put_chinese_text(frame, f"警告: {alert_msg}", (10, 70),
                                          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
             # 人员数量信息

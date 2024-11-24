@@ -1,7 +1,6 @@
 import os
 from datetime import datetime, timedelta
 import cv2
-from sentry_sdk.profiler import frame_id
 from utils import put_chinese_text
 
 
