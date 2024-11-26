@@ -56,12 +56,14 @@ async def process_camera(stream_url):
     active_camera[stream_url] = cap
 
     frame_count = 0
-    skip_frames = 10
-    last_alert_msg = " "
+    skip_frames = 30
+    alert_msg_display = " "
+    person_count = 0
+
 
     def stream_video():
 
-        nonlocal frame_count, stream_url, last_alert_msg
+        nonlocal frame_count, stream_url, alert_msg_display, person_count
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -71,7 +73,11 @@ async def process_camera(stream_url):
             frame_count += 1
             person_count = 0
 
+
             if frame_count % skip_frames == 0:
+                print("frame_count")
+                print(frame_count)
+
                 alert_msg = " "
                 # 每x帧调用模型进行推理
                 # 判断是否有跌倒：
@@ -104,7 +110,11 @@ async def process_camera(stream_url):
                 # print(person_count)
                 # print(alert_msg)
                 # 在帧上显示检测到的人员
+                print('alert_msg')
+                print(alert_msg)
                 if mqtt_msgs:
+                    print("mqtt_msgs")
+                    print(mqtt_msgs)
                     for msg in mqtt_msgs:
                         if isinstance(msg, dict):
                             # 将字典序列化为 JSON 字符串
@@ -115,16 +125,13 @@ async def process_camera(stream_url):
                             # 如果不是字典，直接转换为字符串并发布
                             mqtt_client.publish(mqtt_topic, str(msg))
 
-                if len(alert_msg) != 1:
-                    last_alert_msg = alert_msg
-            else:
-                alert_msg = last_alert_msg
+                alert_msg_display = alert_msg
 
             # print(person_count)
             # print(alert_msg)
             # print(last_alert_msg)
             # 如果有警告，显示警告信息
-            frame = put_chinese_text(frame, f"警告: {alert_msg}", (10, 70),
+            frame = put_chinese_text(frame, f"警告: {alert_msg_display}", (10, 70),
                                          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
             # 人员数量信息

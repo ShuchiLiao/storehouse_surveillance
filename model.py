@@ -42,6 +42,7 @@ class DetectEvent:
 
     def alert_and_screenshot(self, stream_url, frame):
         if not self.event_status:
+            print("not self.event_status")
             # 生成截图文件名
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             screenshot_name = f"screenshots/{self.cls}_{timestamp}.jpg"
@@ -54,10 +55,12 @@ class DetectEvent:
             mqtt_msg = {
                 "stream":stream_url,
                 "time": timestamp,
-                "eventType":self.event,
+                "eventType":self.cls,
                 "screenshot":screenshot_name
             }
             return mqtt_msg
+        else:
+            return None
 
     def reset_event_status(self):
         """重置事件状态，避免频繁保存相同事件的截图。"""
@@ -88,6 +91,7 @@ class DetectPerson(DetectEvent):
                     person_count += 1
 
             if person_count == 1:
+                print("mqtt_msg+1")
                 mqtt_msg = self.alert_and_screenshot(stream_url, frame)
 
         self.reset_event_status()
