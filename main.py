@@ -12,6 +12,7 @@ import paho.mqtt.client as mqtt
 from utils import put_chinese_text
 import json
 
+
 logging.getLogger().setLevel(logging.WARNING)
 
 # 存储正在使用的摄像头资源
@@ -19,7 +20,7 @@ active_camera = {}
 models = {}
 
 # 定义线程池
-executor = ThreadPoolExecutor(max_workers=20)  # 最大线程数可以根据系统资源调整
+executor = ThreadPoolExecutor(max_workers=50)  # 最大线程数可以根据系统资源调整
 # 加载模型
 model_fall = YOLO('./model/best_fall.pt', verbose=False)
 model_fire = YOLO('./model/best_fire.pt', verbose=False)
@@ -44,11 +45,6 @@ mqtt_msgs = []
 
 async def process_camera(stream_url):
     cap = cv2.VideoCapture(f"{stream_url}?rtsp_transport=tcp")
-    # # 设置帧率为5fps
-    # cap.set(cv2.CAP_PROP_FPS, 2)  # 将帧率设置为 5
-    # # 验证帧率设置是否成功
-    # fps = cap.get(cv2.CAP_PROP_FPS)
-    # print(f"Current FPS: {fps}")
 
     if not cap.isOpened():
         raise Exception(f"无法打开摄像头 {stream_url}")
@@ -57,13 +53,13 @@ async def process_camera(stream_url):
 
     frame_count = 0
     skip_frames = 30
-    alert_msg_display = " "
+    alert_msg= " "
     person_count = 0
 
 
     def stream_video():
 
-        nonlocal frame_count, stream_url, alert_msg_display, person_count
+        nonlocal frame_count, stream_url, alert_msg, person_count
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -71,50 +67,43 @@ async def process_camera(stream_url):
                 break
 
             frame_count += 1
-            person_count = 0
-
 
             if frame_count % skip_frames == 0:
-                print("frame_count")
-                print(frame_count)
-
                 alert_msg = " "
                 # 每x帧调用模型进行推理
                 # 判断是否有跌倒：
-                frame, mqtt_fall = detect_fall.detect_and_alert(stream_url, frame, 0.8)
+                frame, mqtt_fall, fall_alert = detect_fall.detect_and_alert(stream_url, frame, 0.8)
                 # 判断是否有吸烟：
-                frame, mqtt_smoke = detect_smoke.detect_and_alert(stream_url, frame, 0.6)
+                frame, mqtt_smoke, smoke_alert = detect_smoke.detect_and_alert(stream_url, frame, 0.6)
                 # 判断是否有火源：
-                frame, mqtt_fire = detect_fire.detect_and_alert(stream_url, frame, 0.65)
+                frame, mqtt_fire, fire_alert = detect_fire.detect_and_alert(stream_url, frame, 0.65)
                 # 判断是否单独作业：
-                frame, mqtt_solo, person_count = detect_solo.detect_and_alert(stream_url, frame, 0.6)
+                frame, mqtt_solo, person_count, solo_alert = detect_solo.detect_and_alert(stream_url, frame, 0.6)
                 # 判断是否戴头盔：
-                frame, mqtt_helmet = detect_helmet.detect_and_alert(stream_url, frame, 0.6)
+                frame, mqtt_helmet, no_helmet_alert = detect_helmet.detect_and_alert(stream_url, frame, 0.6)
 
                 if mqtt_fall:
                     mqtt_msgs.append(mqtt_fall)
+                if fall_alert:
                     alert_msg += " 摔倒 "
                 if mqtt_smoke:
                     mqtt_msgs.append(mqtt_smoke)
+                if smoke_alert:
                     alert_msg += " 吸烟 "
                 if mqtt_fire:
                     mqtt_msgs.append(mqtt_fire)
+                if fire_alert:
                     alert_msg += " 火源 "
                 if mqtt_solo:
                     mqtt_msgs.append(mqtt_solo)
+                if solo_alert:
                     alert_msg += " 单独作业 "
                 if mqtt_helmet:
                     mqtt_msgs.append(mqtt_helmet)
+                if no_helmet_alert:
                     alert_msg += " 未戴头盔 "
 
-                # print(person_count)
-                # print(alert_msg)
-                # 在帧上显示检测到的人员
-                print('alert_msg')
-                print(alert_msg)
                 if mqtt_msgs:
-                    print("mqtt_msgs")
-                    print(mqtt_msgs)
                     for msg in mqtt_msgs:
                         if isinstance(msg, dict):
                             # 将字典序列化为 JSON 字符串
@@ -124,20 +113,15 @@ async def process_camera(stream_url):
                         else:
                             # 如果不是字典，直接转换为字符串并发布
                             mqtt_client.publish(mqtt_topic, str(msg))
+                mqtt_msgs.clear()
 
-                alert_msg_display = alert_msg
-
-            # print(person_count)
-            # print(alert_msg)
-            # print(last_alert_msg)
             # 如果有警告，显示警告信息
-            frame = put_chinese_text(frame, f"警告: {alert_msg_display}", (10, 70),
+            frame = put_chinese_text(frame, f"警告: {alert_msg}", (10, 70),
                                          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
             # 人员数量信息
             frame = put_chinese_text(frame, f"人员数量: {person_count}", (10, 30),
                                      font_path='Fonts/simhei.ttf', font_size=25, color=(0, 255, 0))
-
 
             # 编码帧并返回
             _, jpeg = cv2.imencode('.jpg', frame)
@@ -158,6 +142,7 @@ async def lifespan(app: FastAPI):
         if cap.isOpened():
             cap.release()
             print(f"Stream {stream_url} released")
+    active_camera.clear()
     print("All Stream released")
 
 app = FastAPI(lifespan=lifespan)

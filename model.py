@@ -18,6 +18,7 @@ class DetectEvent:
         results = self.model(frame, conf=confidence, verbose=False)
         # results is a list=[result], each result stands for result for each cls
         mqtt_msg = None
+        alert = False
 
         for result in results:
             # if the class is not detected, result.boxes is None, otherwise, boxes is a list[box] of
@@ -33,16 +34,15 @@ class DetectEvent:
 
                     put_chinese_text(frame, f"{self.event.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
                              font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
-
+                    alert = True
                 mqtt_msg = self.alert_and_screenshot(stream_url, frame)
 
         self.reset_event_status()
 
-        return frame, mqtt_msg
+        return frame, mqtt_msg, alert
 
     def alert_and_screenshot(self, stream_url, frame):
         if not self.event_status:
-            print("not self.event_status")
             # 生成截图文件名
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             screenshot_name = f"screenshots/{self.cls}_{timestamp}.jpg"
@@ -77,6 +77,7 @@ class DetectPerson(DetectEvent):
         results = self.model(frame, conf=confidence, verbose=False)
         mqtt_msg = None
         person_count = 0
+        alert = False
 
         for result in results:
             if result.boxes:
@@ -91,18 +92,19 @@ class DetectPerson(DetectEvent):
                     person_count += 1
 
             if person_count == 1:
-                print("mqtt_msg+1")
+                alert = True
                 mqtt_msg = self.alert_and_screenshot(stream_url, frame)
 
         self.reset_event_status()
 
-        return frame, mqtt_msg, person_count
+        return frame, mqtt_msg, person_count, alert
 
 class DetectHelmet(DetectEvent):
     def detect_and_alert(self, stream_url, frame, confidence):
         results = self.model(frame, conf=confidence, verbose=False)
         mqtt_msg = None
         no_helmet = False
+        alert = False
 
         for result in results:
             if result.boxes:
@@ -119,11 +121,12 @@ class DetectHelmet(DetectEvent):
                                  font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
             if no_helmet:
+                alert = True
                 mqtt_msg = self.alert_and_screenshot(stream_url, frame)
 
         self.reset_event_status()
 
-        return frame, mqtt_msg
+        return frame, mqtt_msg, alert
 
 
 
