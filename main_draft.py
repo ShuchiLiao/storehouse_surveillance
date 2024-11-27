@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from model import LiveAlertSystem
 import cv2
 import asyncio
+from asyncio import Queue
 from concurrent.futures import ThreadPoolExecutor
 from ultralytics import YOLO
 import logging
@@ -16,6 +17,7 @@ logging.getLogger().setLevel(logging.DEBUG)
 # 存储正在使用的摄像头资源
 active_camera = {}
 models = {}
+
 # 定义线程池
 executor = ThreadPoolExecutor(max_workers=50)  # 最大线程数可以根据系统资源调整
 # 加载模型
@@ -31,23 +33,32 @@ mqtt_topic = "/ai"
 
 async def process_camera(stream_url):
     cap = cv2.VideoCapture(f"{stream_url}?rtsp_transport=tcp")
+    # # 设置帧率为5fps
+    # cap.set(cv2.CAP_PROP_FPS, 2)  # 将帧率设置为 5
+    # # 验证帧率设置是否成功
+    # fps = cap.get(cv2.CAP_PROP_FPS)
+    # print(f"Current FPS: {fps}")
 
     if not cap.isOpened():
         raise Exception(f"无法打开摄像头 {stream_url}")
 
     active_camera[stream_url] = cap
 
+    queue = Queue(maxsize=10)
     frame_count = 0
     skip_frames = 30
 
     person_count = 0
     alert_msg_display = " "
 
-    async def stream_video():
+    async def inference_task():
         """推理线程：处理帧并将编码后的数据放入队列"""
         nonlocal frame_count, person_count, alert_msg_display, stream_url
+        print("Running inference...")
         while cap.isOpened():
+            print("Reading frame...")
             ret, frame = cap.read()
+            print(f"Frame read success: {ret}")
             if not ret:
                 break
 
@@ -61,7 +72,9 @@ async def process_camera(stream_url):
                 person_count = person_count
                 if alert_msg:
                     alert_msg_display = " ".join(sorted(alert_msg))
-
+                # print(person_count)
+                # print(alert_msg)
+                # 在帧上显示检测到的人员
                 if mqtt_msgs:
                     for msg in mqtt_msgs:
                         if isinstance(msg, dict):
@@ -72,7 +85,6 @@ async def process_camera(stream_url):
                         else:
                             # 如果不是字典，直接转换为字符串并发布
                             mqtt_client.publish(mqtt_topic, str(msg))
-                    mqtt_msgs.clear()  # 清空 mqtt_msgs，防止占用内存
 
             frame = put_chinese_text(frame, f"人员数量: {person_count}", (10, 30),
                                      font_path='Fonts/simhei.ttf', font_size=25, color=(0, 255, 0))
@@ -83,12 +95,34 @@ async def process_camera(stream_url):
             # 编码帧并返回
             _, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
             frame_bytes = jpeg.tobytes()
+
+            print(f"Queue size before put: {queue.qsize()}")
+            if queue.full():
+                queue.get_nowait()
+            queue.put_nowait(frame_bytes)
+            print(f"Queue size after put: {queue.qsize()}")
+
+    async def streaming_task():
+        """传输线程：从队列中获取帧并发送给客户端"""
+        print("Streaming frame...")
+        while True:
+            print(f"Queue size before get: {queue.qsize()}")
+            frame_bytes = await queue.get()
+            print("Streaming frame...")
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n\r\n')
 
-
+    # 创建异步任务
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(executor, stream_video)
+    inference = loop.create_task(inference_task())
+
+    try:
+        # 返回流式数据（传输线程）
+        return streaming_task()
+    finally:
+        # 关闭摄像头资源
+        inference.cancel()
+        cap.release()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

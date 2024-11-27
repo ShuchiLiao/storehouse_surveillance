@@ -28,6 +28,15 @@ class LiveAlertSystem:
             "smoking": datetime.now()
         }
 
+        # ID-class: {0:fall, 1:fire, 2:helmet, 3:no-helmet, 4:person, 5:smoking}
+        self.confidence_threshold = {
+            4: 0.6,
+            3: 0.8,
+            1:0.1,
+            0: 0.05,
+            5: 0.03,
+        }
+
         self.alert_message = set()
 
         if not os.path.exists('screenshots'):
@@ -49,8 +58,10 @@ class LiveAlertSystem:
             for box in boxes:
                 xyxy = box.xyxy.tolist()[0]
                 class_id = int(box.cls.tolist()[0])
+                confidence = box.conf.tolist()[0]
                 # confidence = box.conf.tolist()[0]
-
+                if confidence < self.confidence_threshold.get(class_id, 0.5):
+                    continue
                # ID-class: {0:fall, 1:fire, 2:helmet, 3:no-helmet, 4:person, 5:smoking}
                 if class_id == 4 or class_id == 2:
                     cls = "工作人员"
@@ -62,7 +73,6 @@ class LiveAlertSystem:
                 if class_id == 5: # 检测到吸烟
                     cls = "吸烟"
                     event = "smoking"
-
 
                 elif class_id == 3:  # 未戴头盔
                     cls = "未戴头盔"
@@ -76,13 +86,14 @@ class LiveAlertSystem:
                     cls = "摔倒"
                     event = "fall"
 
-                    # 绘制边界框和标签
+                    # 绘制边界框
                 cv2.rectangle(frame, (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3])), (0, 255, 0), 2)
-                # cv2.putText(frame, f"{event}", (int(xyxy[0]), int(xyxy[1]) - 10),
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
+                # # cv2.putText(frame, f"{event}", (int(xyxy[0]), int(xyxy[1]) - 10),
+                # # #             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
+                # #
+                # put_chinese_text(frame, f"{cls.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
+                #          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
-                put_chinese_text(frame, f"{cls.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
-                         font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
                 if alert:
                     mqtt_msg = self.alert_and_screenshot(stream_url, frame, event, cls)
                     if mqtt_msg:
@@ -93,14 +104,6 @@ class LiveAlertSystem:
                 mqtt_msg = self.alert_and_screenshot(stream_url, frame, "solo", "单独作业")
                 if mqtt_msg:
                     mqtt_msgs.append(mqtt_msg)
-        # # 在帧上显示检测到的人员数量
-        # frame = put_chinese_text(frame, f"人员数量: {person_count}", (10, 30),
-        #                          font_path='Fonts/simhei.ttf', font_size=25, color=(0, 255, 0))
-        #
-        #
-        # # 如果有警告，显示警告信息
-        # frame = put_chinese_text(frame, f"警告: {' '.join(sorted(self.alert_message))}", (10, 70),
-        #                              font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
         # 重置事件状态（根据冷却时间）
         self.reset_event_status()
