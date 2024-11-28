@@ -4,6 +4,7 @@ __pycache__
 Fonts/
 model/
 screenshots/
+trainshots/
 *.pyc
 *.pyo
 *.pyd
@@ -23,5 +24,4 @@ screenshots/
 *.rar
 test.py
 README.md
-
 

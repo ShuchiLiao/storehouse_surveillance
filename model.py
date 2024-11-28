@@ -24,40 +24,47 @@ class DetectEvent:
             # if the class is not detected, result.boxes is None, otherwise, boxes is a list[box] of
             # detected objects.
             if result.boxes:
+
+                # 保存图片以备以后训练使用
+                _ = self.alert_and_screenshot(stream_url, frame, for_train=True)
+
                 for box in result.boxes:
                     xyxy = box.xyxy.tolist()[0]
 
-                        # 绘制边界框和标签
+                    # 绘制边界框和标签
                     cv2.rectangle(frame, (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3])), (0, 255, 0), 2)
                     # cv2.putText(frame, f"{event}", (int(xyxy[0]), int(xyxy[1]) - 10),
                     #             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
-
-                    put_chinese_text(frame, f"{self.event.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
-                             font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
+                    # put_chinese_text(frame, f"{self.event.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
+                    #          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
                     alert = True
-                mqtt_msg = self.alert_and_screenshot(stream_url, frame)
+                mqtt_msg = self.alert_and_screenshot(stream_url, frame, for_train=False)
 
         self.reset_event_status()
 
         return frame, mqtt_msg, alert
 
-    def alert_and_screenshot(self, stream_url, frame):
+    def alert_and_screenshot(self, stream_url, frame, for_train=False):
         if not self.event_status:
-            # 生成截图文件名
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            screenshot_name = f"screenshots/{self.cls}_{timestamp}.jpg"
-            self.event_status = True
-            # 更新截图时间
-            self.event_screen_time = datetime.now()
-            # 保存截图
-            cv2.imwrite(screenshot_name, frame)
-            # mqtt_信息
-            mqtt_msg = {
-                "stream":stream_url,
-                "time": timestamp,
-                "eventType":self.cls,
-                "screenshot":screenshot_name
-            }
+            if for_train:
+                file_name = f"trainshots/{self.cls}_{timestamp}.jpg"
+                cv2.imwrite(file_name, frame)
+                return None
+            else:
+                file_name = f"screenshots/{self.cls}_{timestamp}.jpg"
+                cv2.imwrite(file_name, frame)
+                # mqtt_信息
+                mqtt_msg = {
+                    "stream":stream_url,
+                    "time": timestamp,
+                    "eventType":self.cls,
+                    "screenshot":file_name
+                }
+
+                self.event_status = True
+                self.event_screen_time = datetime.now()
+
             return mqtt_msg
         else:
             return None
@@ -81,19 +88,22 @@ class DetectPerson(DetectEvent):
 
         for result in results:
             if result.boxes:
+                # 保存图片以备以后训练使用
+                _ = self.alert_and_screenshot(stream_url, frame, for_train=True)
+
                 for box in result.boxes:
                     xyxy = box.xyxy.tolist()[0]
 
                     cv2.rectangle(frame, (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3])), (0, 255, 0), 2)
 
-                    put_chinese_text(frame, "工作人员", (int(xyxy[0]), int(xyxy[1]) - 10),
-                             font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
+                    # put_chinese_text(frame, "工作人员", (int(xyxy[0]), int(xyxy[1]) - 10),
+                    #          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
                     person_count += 1
 
             if person_count == 1:
                 alert = True
-                mqtt_msg = self.alert_and_screenshot(stream_url, frame)
+                mqtt_msg = self.alert_and_screenshot(stream_url, frame, for_train=False)
 
         self.reset_event_status()
 
@@ -105,9 +115,16 @@ class DetectHelmet(DetectEvent):
         mqtt_msg = None
         no_helmet = False
         alert = False
+        train_shot_saved=False
 
         for result in results:
+
             if result.boxes:
+                # 保存图片以备以后训练使用
+                if not train_shot_saved:
+                    _ = self.alert_and_screenshot(stream_url, frame, for_train=True)
+                    train_shot_saved = True
+
                 for box in result.boxes:
                     cls_idx = int(box.cls)
                     if cls_idx == 1:
@@ -117,12 +134,12 @@ class DetectHelmet(DetectEvent):
                         # cv2.putText(frame, f"{event}", (int(xyxy[0]), int(xyxy[1]) - 10),
                         #             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
 
-                        put_chinese_text(frame, f"{self.event.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
-                                 font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
+                        # put_chinese_text(frame, f"{self.event.strip()}", (int(xyxy[0]), int(xyxy[1]) - 10),
+                        #          font_path='Fonts/simhei.ttf', font_size=25, color=(255, 0, 0))
 
             if no_helmet:
                 alert = True
-                mqtt_msg = self.alert_and_screenshot(stream_url, frame)
+                mqtt_msg = self.alert_and_screenshot(stream_url, frame, for_train=False)
 
         self.reset_event_status()
 
